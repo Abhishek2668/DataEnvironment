@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, MetaData, String
+from sqlalchemy import Column, DateTime, Float, Integer, MetaData, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 metadata = MetaData()
@@ -50,4 +50,34 @@ class EquityCurve(Base):
     equity: Mapped[float] = mapped_column(Float)
 
 
-__all__ = ["Base", "Candle", "TradeRecord", "EquityCurve"]
+class RunRecord(Base):
+    __tablename__ = "runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    type: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))
+    strategy: Mapped[str] = mapped_column(String(32))
+    instrument: Mapped[str] = mapped_column(String(16))
+    granularity: Mapped[str] = mapped_column(String(8))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    config: Mapped[str] = mapped_column(Text)
+
+
+class RunMetricRecord(Base):
+    __tablename__ = "run_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    metrics: Mapped[str] = mapped_column(Text)
+    equity_curve: Mapped[str] = mapped_column(Text)
+
+
+__all__ = [
+    "Base",
+    "Candle",
+    "TradeRecord",
+    "EquityCurve",
+    "RunRecord",
+    "RunMetricRecord",
+]

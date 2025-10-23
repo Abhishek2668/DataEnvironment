@@ -5,3 +5,36 @@ services:
     volumes:
       - ./:/app
     tty: true
+  api:
+    build: .
+    command: poetry run uvicorn forex.api:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+  frontend:
+    image: node:20
+    working_dir: /app/frontend
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5173"
+    environment:
+      VITE_API_BASE: http://localhost:8000
+      VITE_DASH_TOKEN: ${DASH_TOKEN:-dev-token}
+    volumes:
+      - ./frontend:/app/frontend
+      - node_modules:/app/frontend/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  node_modules:

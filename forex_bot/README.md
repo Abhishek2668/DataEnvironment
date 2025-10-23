@@ -40,13 +40,31 @@ poetry run forex run-live --strategy sma --instrument USD_JPY --granularity M1 -
 poetry run forex show-metrics --run-id last
 ```
 
+## Web Dashboard & API
+
+Expose the FastAPI layer with:
+
+```bash
+poetry run forex api --host 0.0.0.0 --port 8000 --reload
+```
+
+The dashboard expects a bearer token defined in `.env` (`DASH_TOKEN`). With the API online start the React frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 to view live account telemetry, control paper runs, tail structured logs via SSE, and launch backtests. All mutating actions remain paper-only and reuse the existing broker, executor, and backtest services.
+
 ## Docker
 
 Build and run services using Docker Compose:
 
 ```bash
 docker compose build
-docker compose run forex backtest --strategy rsi --instrument EUR_USD --granularity M5 --risk 0.5
+docker compose up api frontend
 ```
 
 ## Testing

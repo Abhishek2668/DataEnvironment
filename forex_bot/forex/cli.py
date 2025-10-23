@@ -16,20 +16,17 @@ from forex.config import Settings, get_settings
 from forex.data.candles_store import CandleStore
 from forex.data.models import Candle
 from forex.logging_config import configure_logging, get_logger
-from forex.strategy.rsi_mean_revert import RSIMeanRevertStrategy
-from forex.strategy.sma_crossover import SMACrossoverStrategy
+from forex.strategy.registry import UnknownStrategyError, create_strategy
 
 app = typer.Typer(help="Forex paper trading CLI")
 logger = get_logger(__name__)
 
 
 def load_strategy(name: str):
-    name = name.lower()
-    if name == "sma":
-        return SMACrossoverStrategy()
-    if name == "rsi":
-        return RSIMeanRevertStrategy()
-    raise typer.BadParameter(f"Unknown strategy {name}")
+    try:
+        return create_strategy(name)
+    except UnknownStrategyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def load_broker(settings: Settings):
@@ -192,6 +189,23 @@ def show_metrics(run_id: str = typer.Option("last"), output_dir: Path = typer.Op
         raise typer.BadParameter("No metrics found")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     typer.echo(json.dumps(metrics, indent=2))
+
+
+@app.command()
+def api(
+    ctx: typer.Context,
+    host: str = typer.Option(None, "--host", help="API host to bind"),
+    port: int = typer.Option(None, "--port", help="API port"),
+    reload: bool = typer.Option(True, "--reload/--no-reload", help="Enable autoreload"),
+) -> None:
+    settings: Settings = ctx.obj or get_settings()
+    api_host = host or settings.api_host
+    api_port = port or settings.api_port
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise typer.Exit(code=1) from exc
+    uvicorn.run("forex.api:app", host=api_host, port=api_port, reload=reload)
 
 
 if __name__ == "__main__":
