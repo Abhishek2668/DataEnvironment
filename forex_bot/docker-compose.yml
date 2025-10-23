@@ -1,0 +1,7 @@
+services:
+  forex:
+    build: .
+    env_file: .env
+    volumes:
+      - ./:/app
+    tty: true
