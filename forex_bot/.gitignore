@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite
+forex.db
+.env
+.poetry-cache
+.mypy_cache
+.pytest_cache
+logs/
+backtest_output/
