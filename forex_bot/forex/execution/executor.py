@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from forex.broker.base import Broker
 from forex.execution.risk import RiskParameters, position_size
 from forex.logging_config import get_logger
 from forex.strategy.base import Signal, Strategy
 from forex.utils.types import OrderRequest, Price
+
+if TYPE_CHECKING:
+    from forex.realtime.bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -22,11 +25,18 @@ class ExecutionConfig:
 
 
 class Executor:
-    def __init__(self, broker: Broker, strategy: Strategy, config: ExecutionConfig) -> None:
+    def __init__(
+        self,
+        broker: Broker,
+        strategy: Strategy,
+        config: ExecutionConfig,
+        event_bus: "EventBus" | None = None,
+    ) -> None:
         self.broker = broker
         self.strategy = strategy
         self.config = config
         self.open_positions: list[dict] = []
+        self.event_bus = event_bus
 
     async def handle_signal(self, signal: Signal) -> None:
         if len(self.open_positions) >= self.config.max_positions:
@@ -56,6 +66,18 @@ class Executor:
             "order_submitted",
             extra={"instrument": order.instrument, "units": order.units, "side": order.side, "reason": signal.reason},
         )
+        if self.event_bus:
+            await self.event_bus.publish(
+                "events",
+                {
+                    "event": "order_submitted",
+                    "instrument": order.instrument,
+                    "side": order.side,
+                    "units": order.units,
+                    "reason": signal.reason,
+                    "response": response,
+                },
+            )
 
     async def run_bar(self, price: Price) -> None:
         self.strategy.on_bar_close(price)

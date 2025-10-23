@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     logs_path: Path = Field(default=Path("logs"))
     spread_pips_default: PositiveFloat = Field(default=0.8)
     enable_prometheus: bool = Field(default=False, alias="ENABLE_PROMETHEUS")
+    dash_token: str = Field(default="dev-token", alias="DASH_TOKEN")
+    api_host: str = Field(default="127.0.0.1", alias="API_HOST")
+    api_port: int = Field(default=8000, alias="API_PORT")
 
     class Config:
         env_prefix = ""
