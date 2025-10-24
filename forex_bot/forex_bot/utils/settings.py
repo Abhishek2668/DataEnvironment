@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     take_profit_pct: float = Field(default=0.0015, alias="TAKE_PROFIT_PCT")
     stop_loss_pct: float = Field(default=0.0008, alias="STOP_LOSS_PCT")
     signal_confidence_threshold: float = Field(default=0.6, alias="SIGNAL_CONFIDENCE_THRESHOLD")
+    oanda_env: str = Field(default="practice", alias="OANDA_ENV")
+    oanda_api_token: Optional[SecretStr] = Field(default=None, alias="OANDA_API_TOKEN")
+    oanda_account_id: Optional[str] = Field(default=None, alias="OANDA_ACCOUNT_ID")
+    default_instrument: str = Field(default="EUR_USD", alias="DEFAULT_INSTRUMENT")
+    default_timeframe: str = Field(default="M5", alias="DEFAULT_TIMEFRAME")
 
     class Config:
         env_file = ".env"
