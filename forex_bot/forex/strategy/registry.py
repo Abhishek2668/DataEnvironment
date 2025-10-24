@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable
 
 from forex.strategy.rsi_mean_revert import RSIMeanRevertConfig, RSIMeanRevertStrategy
 from forex.strategy.sma_crossover import SMACrossoverConfig, SMACrossoverStrategy
+from forex.strategy.murphy_candles import MurphyCandlesConfig, MurphyCandlesV1Strategy
 
 StrategyParams = Dict[str, Any]
 
@@ -16,6 +17,7 @@ class UnknownStrategyError(ValueError):
 STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {
     "sma": {"factory": SMACrossoverStrategy, "config": SMACrossoverConfig},
     "rsi": {"factory": RSIMeanRevertStrategy, "config": RSIMeanRevertConfig},
+    "murphy_candles_v1": {"factory": MurphyCandlesV1Strategy, "config": MurphyCandlesConfig},
 }
 
 
