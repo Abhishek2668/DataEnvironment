@@ -14,7 +14,7 @@ engine = TradingEngine.get_instance(settings)
 @router.get("/health")
 async def health() -> dict:
     status_payload = await engine.status()
-    return {"status": "ok", **status_payload}
+    return {"status": "ok", "engine": status_payload}
 
 
 @router.get("/status")

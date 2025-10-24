@@ -73,7 +73,7 @@ export default function Dashboard() {
           <div className="space-y-6">
             <div className="rounded-xl bg-gray-900 p-6 shadow-lg">
               <TradingControls
-                status={session.status}
+                session={session}
                 onStatusChange={(nextStatus, patch) => {
                   handleStatusChange(nextStatus, patch);
                   setActionError(null);
@@ -84,6 +84,9 @@ export default function Dashboard() {
                 Current Status: {" "}
                 <span className="font-semibold text-white">
                   {session.status.charAt(0).toUpperCase() + session.status.slice(1)}
+                </span>
+                <span className="ml-2 text-gray-500">
+                  · {session.instrument ?? "--"} ({session.timeframe ?? "--"})
                 </span>
                 {session.run_id && <span className="ml-2 text-gray-500">· Run ID {session.run_id}</span>}
               </div>

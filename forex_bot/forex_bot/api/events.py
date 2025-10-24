@@ -17,8 +17,9 @@ engine = TradingEngine.get_instance(settings)
 async def event_stream():
     queue = await engine.bus.subscribe("*")
     try:
-        initial = json.dumps({"type": "engine.status", "running": engine.running})
-        yield f"data: {initial}\n\n"
+        snapshot = await engine.status()
+        snapshot.update({"type": "engine.status"})
+        yield f"data: {json.dumps(snapshot)}\n\n"
         while True:
             event = await queue.get()
             payload = json.dumps(event.encode())
