@@ -21,22 +21,8 @@ class ForceSignalRequest(BaseModel):
 async def force_signal(payload: ForceSignalRequest) -> dict:
     if not engine.running or engine.current_run is None:
         raise HTTPException(status_code=409, detail="Trading engine is not running")
-    price = engine.last_price()
-    if price is None and engine.context is not None:
-        candles = await engine.store.get_latest(engine.context.instrument, engine.context.timeframe, 1)
-        if candles:
-            price = candles[-1].close
-    if price is None:
-        raise HTTPException(status_code=409, detail="No market data available")
     engine.force_signal(payload.direction, payload.confidence)
-    order = await engine.broker.place_order(
-        run_id=engine.current_run.id,
-        instrument=engine.context.instrument if engine.context else "EUR_USD",
-        direction=payload.direction,
-        price=price,
-        confidence=payload.confidence,
-    )
-    return {"status": "ok", "order": order}
+    return {"status": "queued", "direction": payload.direction, "confidence": payload.confidence}
 
 
 __all__ = ["router"]

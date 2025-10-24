@@ -18,8 +18,8 @@ runner = LiveRunner(engine)
 
 
 class SessionStartRequest(BaseModel):
-    instrument: str = Field(default="EUR_USD")
-    timeframe: str = Field(default="M5")
+    instrument: Optional[str] = Field(default=None)
+    timeframe: Optional[str] = Field(default=None)
     mode: Optional[str] = Field(default=None)
 
 

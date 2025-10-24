@@ -2,54 +2,52 @@ export type SessionStatus = "running" | "stopped" | "error";
 
 export interface SessionState {
   status: SessionStatus;
+  running: boolean;
   run_id: string | null;
-  equity: number | null;
-  start_equity: number | null;
-  daily_return_pct: number | null;
-  open_positions: number;
-  trades_today: number;
-  target_hit: boolean;
-  loss_limit_hit: boolean;
-  timestamp: string | null;
-  message: string | null;
-  strategy: string | null;
   instrument: string | null;
-  granularity: string | null;
+  timeframe: string | null;
+  last_signal_direction: string | null;
+  last_signal_confidence: number | null;
+  open_trades: number;
+  unrealized_pnl: number | null;
+  last_candle_at: string | null;
+  activity: string | null;
+  message: string | null;
+  confidence: number | null;
 }
 
 export const defaultSessionState: SessionState = {
   status: "stopped",
+  running: false,
   run_id: null,
-  equity: null,
-  start_equity: null,
-  daily_return_pct: null,
-  open_positions: 0,
-  trades_today: 0,
-  target_hit: false,
-  loss_limit_hit: false,
-  timestamp: null,
-  message: null,
-  strategy: null,
   instrument: null,
-  granularity: null,
+  timeframe: null,
+  last_signal_direction: null,
+  last_signal_confidence: null,
+  open_trades: 0,
+  unrealized_pnl: null,
+  last_candle_at: null,
+  activity: null,
+  message: null,
+  confidence: null,
 };
 
 export function normalizeSessionState(value: Partial<SessionState> | null | undefined): SessionState {
-  const status: SessionStatus = value?.status === "running" || value?.status === "error" ? value.status : "stopped";
+  const running = Boolean(value?.running ?? (value?.status === "running"));
+  const status: SessionStatus = value?.status === "error" ? "error" : running ? "running" : "stopped";
   return {
     status,
+    running,
     run_id: value?.run_id ?? null,
-    equity: value?.equity ?? null,
-    start_equity: value?.start_equity ?? null,
-    daily_return_pct: value?.daily_return_pct ?? null,
-    open_positions: value?.open_positions ?? 0,
-    trades_today: value?.trades_today ?? 0,
-    target_hit: value?.target_hit ?? false,
-    loss_limit_hit: value?.loss_limit_hit ?? false,
-    timestamp: value?.timestamp ?? null,
-    message: value?.message ?? null,
-    strategy: value?.strategy ?? null,
     instrument: value?.instrument ?? null,
-    granularity: value?.granularity ?? null,
+    timeframe: value?.timeframe ?? null,
+    last_signal_direction: value?.last_signal_direction ?? value?.last_signal ?? null,
+    last_signal_confidence: value?.last_signal_confidence ?? value?.confidence ?? null,
+    open_trades: value?.open_trades ?? value?.open_positions ?? 0,
+    unrealized_pnl: value?.unrealized_pnl ?? null,
+    last_candle_at: value?.last_candle_at ?? value?.last_candle_timestamp ?? ("timestamp" in (value ?? {}) ? (value as any).timestamp ?? null : null),
+    activity: value?.activity ?? null,
+    message: value?.message ?? null,
+    confidence: value?.confidence ?? value?.last_signal_confidence ?? null,
   };
 }

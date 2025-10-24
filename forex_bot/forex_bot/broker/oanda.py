@@ -1,12 +1,13 @@
-"""In-memory paper broker that persists trades to SQLite."""
+"""Broker implementation that proxies trades to OANDA's REST API."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, Iterable, List
+from typing import Iterable, List
 
+import httpx
 from sqlalchemy import select
 
 from forex_bot.data.candles import CandleStore
@@ -16,15 +17,29 @@ from forex_bot.utils.event_bus import EventBus
 logger = logging.getLogger(__name__)
 
 
-class PaperBroker:
-    """Minimal paper broker that fills market orders immediately."""
+class OandaBroker:
+    """Submit market orders to OANDA and persist fills locally."""
 
     def __init__(self, settings, store: CandleStore, bus: EventBus) -> None:
         self.settings = settings
         self.store = store
         self.bus = bus
-        self._balance = settings.paper_starting_balance
         self._lock = asyncio.Lock()
+        self._base_url = (
+            "https://api-fxtrade.oanda.com"
+            if settings.oanda_env.lower() == "live"
+            else "https://api-fxpractice.oanda.com"
+        )
+        token = (
+            settings.oanda_api_token.get_secret_value()
+            if settings.oanda_api_token
+            else None
+        )
+        if not token:
+            raise RuntimeError("OANDA_API_TOKEN is required when using the OANDA broker")
+        if not settings.oanda_account_id:
+            raise RuntimeError("OANDA_ACCOUNT_ID is required when using the OANDA broker")
+        self._token = token
 
     async def execute_trade(
         self,
@@ -55,75 +70,85 @@ class PaperBroker:
         confidence: float,
     ) -> dict:
         units = self.settings.trade_units if direction == "long" else -self.settings.trade_units
-        async with self._lock:
-            return await self._place_and_fill(
-                run_id=run_id,
-                instrument=instrument,
-                direction=direction,
-                units=units,
-                price=price,
-                confidence=confidence,
-            )
-
-    async def _place_and_fill(
-        self,
-        *,
-        run_id: str,
-        instrument: str,
-        direction: str,
-        units: int,
-        price: float,
-        confidence: float,
-    ) -> dict:
-        order_id = uuid.uuid4().hex
-        position_id = uuid.uuid4().hex
-        now = datetime.utcnow()
-        session = self.store._session_factory()
-        try:
-            order = OrderORM(
-                id=order_id,
-                run_id=run_id,
-                instrument=instrument,
-                direction=direction,
-                units=units,
-                price=price,
-                status="filled",
-                created_at=now,
-                executed_at=now,
-            )
-            position = PositionORM(
-                id=position_id,
-                run_id=run_id,
-                order_id=order_id,
-                instrument=instrument,
-                direction=direction,
-                entry_price=price,
-                units=abs(units),
-                status="open",
-                opened_at=now,
-            )
-            session.add(order)
-            session.add(position)
-            session.commit()
-        finally:
-            session.close()
-
-        payload = {
-            "order_id": order_id,
-            "position_id": position_id,
-            "instrument": instrument,
-            "direction": direction,
-            "price": price,
-            "units": units,
-            "confidence": confidence,
+        body = {
+            "order": {
+                "instrument": instrument,
+                "units": str(units),
+                "timeInForce": "FOK",
+                "type": "MARKET",
+                "positionFill": "DEFAULT",
+            }
         }
-        await self.bus.publish("order.filled", payload)
-        logger.info("Filled paper order %s", payload)
-        return payload
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self._base_url}/v3/accounts/{self.settings.oanda_account_id}/orders"
+        async with self._lock:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0)) as client:
+                    response = await client.post(url, json=body, headers=headers)
+                    response.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.error("Failed to place OANDA order: %s", exc)
+                raise
+
+            data = response.json()
+            order_fill = data.get("orderFillTransaction", {})
+            order_id = order_fill.get("id", uuid.uuid4().hex)
+            fill_price = float(order_fill.get("price", price))
+            filled_units = int(float(order_fill.get("units", units)))
+            now = datetime.utcnow()
+
+            position_id = uuid.uuid4().hex
+            session = self.store._session_factory()
+            try:
+                order = OrderORM(
+                    id=order_id,
+                    run_id=run_id,
+                    instrument=instrument,
+                    direction=direction,
+                    units=filled_units,
+                    price=fill_price,
+                    status="filled",
+                    created_at=now,
+                    executed_at=now,
+                )
+                position = PositionORM(
+                    id=position_id,
+                    run_id=run_id,
+                    order_id=order_id,
+                    instrument=instrument,
+                    direction=direction,
+                    entry_price=fill_price,
+                    units=abs(filled_units),
+                    status="open",
+                    opened_at=now,
+                )
+                session.add(order)
+                session.add(position)
+                session.commit()
+            finally:
+                session.close()
+
+            payload = {
+                "order_id": order_id,
+                "position_id": position_id,
+                "instrument": instrument,
+                "direction": direction,
+                "price": fill_price,
+                "units": filled_units,
+                "confidence": confidence,
+            }
+            await self.bus.publish("order.filled", payload)
+            return payload
 
     async def update_positions(self, run_id: str, *, instrument: str, price: float) -> List[dict]:
+        # Mirror paper broker behaviour locally for consistent analytics.
         async with self._lock:
-            closed = await asyncio.to_thread(self._update_positions_sync, run_id, instrument, price)
+            closed = await asyncio.to_thread(
+                self._update_positions_sync, run_id, instrument, price
+            )
         for payload in closed:
             await self.bus.publish("position.closed", payload)
         return closed
@@ -166,30 +191,26 @@ class PaperBroker:
                     pnl = (pos.entry_price - price) * pos.units
                 if not should_close:
                     continue
-                self._balance += pnl
                 pos.status = "closed"
                 pos.exit_price = price
                 pos.closed_at = datetime.utcnow()
                 pos.pnl = pnl
                 session.add(pos)
                 session.commit()
-                event_payload = {
-                    "run_id": run_id,
-                    "position_id": pos.id,
-                    "order_id": pos.order_id,
-                    "reason": reason,
-                    "pnl": pnl,
-                    "instrument": instrument,
-                    "exit_price": price,
-                }
-                closed.append(event_payload)
+                closed.append(
+                    {
+                        "run_id": run_id,
+                        "position_id": pos.id,
+                        "order_id": pos.order_id,
+                        "reason": reason,
+                        "pnl": pnl,
+                        "instrument": instrument,
+                        "exit_price": price,
+                    }
+                )
         finally:
             session.close()
         return closed
-
-    async def account_summary(self) -> Dict[str, float]:
-        async with self._lock:
-            return {"balance": self._balance}
 
     async def list_open_positions(self, run_id: str) -> List[dict]:
         return [pos for pos in await self.store.list_positions(run_id) if pos["status"] == "open"]
@@ -207,4 +228,4 @@ class PaperBroker:
         return unrealized
 
 
-__all__ = ["PaperBroker"]
+__all__ = ["OandaBroker"]
