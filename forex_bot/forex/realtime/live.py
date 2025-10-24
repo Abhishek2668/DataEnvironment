@@ -117,7 +117,7 @@ class LiveRunner:
                 risk_pct=config.risk_pct,
                 max_positions=config.max_positions,
             )
-            run_id = utc_now().format("YYYYMMDDHHmmss")
+            run_id = utc_now().strftime("%Y%m%d%H%M%S")
             self._current_config = config
             self._current_run_id = run_id
             await self._initialise_state(run_id=run_id, config=config)
