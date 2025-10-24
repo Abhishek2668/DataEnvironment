@@ -1,100 +1,128 @@
-# Forex Paper Trading Application
+# Forex RL Trading Platform
 
-This directory contains everything required to run the forex paper-trading
-experience: infrastructure-as-code, Python backend, React frontend, automation
-scripts, and tests.  The goal of this README is to orient developers so they can
-quickly understand how each piece of the stack fits together.
+This repository provides a production-ready paper/real FX trading stack composed of a
+FastAPI backend and a Vite + React dashboard.  The platform streams market data
+through a transparent pipeline, applies PPO-based reinforcement-learning signals,
+enforces robust risk management, and executes trades via a broker adapter.
 
-## High-Level Architecture
+## Architecture Overview
 
 ```
-┌──────────────────┐     HTTP + SSE      ┌────────────────────────┐
-│ React Dashboard  │  ─────────────────▶ │ FastAPI Application    │
-│ (frontend/)      │ ◀────────────────── │ (forex/api.py)         │
-└──────────────────┘   REST + streaming  └─────────┬──────────────┘
-                                                   │
-                                                   ▼
-                                        Domain Packages (forex/)
-                                                   │
-                                                   ▼
-                                         Brokers, Strategies,
-                                         Backtesting, Storage
+┌──────────────────────┐      HTTP + SSE       ┌────────────────────────────┐
+│ React Dashboard      │  ⇄  /api/* & events  │ FastAPI Application         │
+│ (frontend/)          │                      │ (forex_app/)                │
+└──────────────────────┘                      └────────────┬────────────────┘
+                                                         ┌─┴──────────────┐
+                                                         │ Engine Stages │
+                                                         └───────────────┘
+     Market Data → Feature Calc → RL Signal → Risk Check → Order Intent → Broker
+            ↓             ↓              ↓             ↓              ↓
+        Position Tracking → PnL Update → News Alerts → Metrics/Logs → Dashboard
 ```
 
-- **frontend/** implements a Vite + React dashboard that authenticates to the
-  API, streams live events, submits new runs, and renders metrics.
-- **forex/** contains the Python domain model: broker adapters, strategy engine,
-  backtesting loop, execution services, realtime orchestration, and shared
-  utilities.
-- **Dockerfile**, **docker-compose.yml**, and **Makefile** coordinate local and
-  containerized workflows.
-- **scripts/** provides helper shell commands (`dev_backend.sh`,
-  `dev_frontend.sh`) for quick-start development.
-- **tests/** contains pytest coverage for the critical code paths.
+### Backend (`forex_app/`)
 
-Each directory includes a README that explains its contents in detail.  Follow
-those breadcrumbs whenever you dive deeper.
-
-## Backend Runtime Overview
-
-1. **Configuration** is loaded from environment variables via
-   [`forex/config.py`](forex/config.py).  Secrets and ports are defined in `.env`.
-2. **FastAPI** is initialised in [`forex/api.py`](forex/api.py).  The app wires
-   together broker factories, data stores, event bus, strategy registry, and
-   live runner.
-3. **Broker adapters** under [`forex/broker`](forex/broker) implement either the
-   OANDA practice API or a deterministic paper simulator.
-4. **Strategies** in [`forex/strategy`](forex/strategy) produce trade signals.
-5. **Execution** modules in [`forex/execution`](forex/execution) translate
-   signals into orders and risk management rules.
-6. **Realtime orchestration** in [`forex/realtime`](forex/realtime) manages
-   streaming prices, event bus fan-out, and the live run lifecycle.
-7. **Backtesting** code in [`forex/backtest`](forex/backtest) replays historical
-   candles, calculates metrics, and writes summary reports.
-8. **Data stores** in [`forex/data`](forex/data) persist candles and run
-   metadata via SQLAlchemy models.
-
-## Frontend Runtime Overview
-
-1. [`frontend/src/lib/api.ts`](frontend/src/lib/api.ts) wraps fetch calls and
-   handles authentication headers.
-2. [`frontend/src/hooks/useApi.ts`](frontend/src/hooks/useApi.ts) and
-   [`frontend/src/hooks/useEventStream.ts`](frontend/src/hooks/useEventStream.ts)
-   encapsulate REST + SSE interactions.
-3. [`frontend/src/App.tsx`](frontend/src/App.tsx) is the primary dashboard
-   container.  It fetches configuration, account snapshots, open positions, run
-   history, and renders charts via Recharts.
-4. [`frontend/src/components`](frontend/src/components) contains small UI
-   primitives (button, card, input, select) used throughout the dashboard.
-
-Consult `frontend/README.md` for a detailed breakdown of the React project and
-its file-by-file responsibilities.
-
-## Operational Files
-
-| File | Purpose |
+| Module | Purpose |
 | --- | --- |
-| `Dockerfile` | Builds a production-ready image that serves the API. |
-| `docker-compose.yml` | Spins up the API, database, and frontend services for local experimentation. |
-| `Makefile` | Provides shortcuts (`dev-api`, `dev-ui`, `lint`, `test`). |
-| `pyproject.toml` | Poetry project definition with lint/test tooling configuration. |
-| `scripts/dev_backend.sh` | Runs the FastAPI server with auto-reload. |
-| `scripts/dev_frontend.sh` | Starts the Vite development server. |
+| `settings.py` | Pydantic settings (env driven) with toggles for risk, RL, CORS, and broker selection. |
+| `models.py` | Typed Pydantic schemas for candles, signals, orders, positions, news items, and engine status. |
+| `event_bus.py` | Async in-process pub/sub bus powering the dashboard SSE feed. |
+| `data.py` | Candle persistence (SQLite) plus feature engineering (EMA, RSI, ATR). |
+| `rl_agent.py` | PPO policy loader with deterministic inference and heuristic fallback. |
+| `rl_env.py` | Minimal Gymnasium environment for PPO training/backtesting experiments. |
+| `risk.py` | ATR-based sizing, leverage/drawdown guards, and order intent builder. |
+| `broker.py` | Broker interface + paper simulator with mark-to-market updates. |
+| `news.py` | Cached polling of the free GDELT news API with naive sentiment tagging. |
+| `engine.py` | Heartbeat-driven orchestration state machine that logs every pipeline stage. |
+| `routes.py` | FastAPI app wiring, CORS, Prometheus metrics, REST routes, and SSE streaming. |
+| `logging.py` | Structlog JSON logging configuration. |
+| `main.py` | Uvicorn entry point exposing `app`. |
 
-## Testing Strategy
+The engine enforces the prescribed state machine:
 
-- `pytest` is the canonical test runner.  See [`tests/README.md`](tests/README.md)
-  for the coverage map.
-- Backtesting, broker integrations, math utilities, and strategies each have
-  dedicated tests under `tests/`.
-- End-to-end API sanity checks live in `tests/test_api.py` and exercise the
-  FastAPI routes against a simulated broker.
+```
+IDLE → DATA_READY → FEATURES_READY → SIGNAL_READY → RISK_OK → ORDER_SENT → POSITION_OPEN → MONITORING
+        ↘ (blocked/error transitions publish reason codes and keep the dashboard informed)
+```
 
-## Next Steps
+Each tick publishes structured events capturing decisions, confidence levels, and
+why trades may have been rejected (e.g., `low_confidence`, `drawdown_stop`).
 
-- Visit [`forex/README.md`](forex/README.md) for backend internals.
-- Visit [`frontend/README.md`](frontend/README.md) for React project details.
-- Review [`tests/README.md`](tests/README.md) to understand coverage.
+### Frontend (`frontend/`)
 
-This directory is the central hub that links all developer documentation in the
-project.  Use the table of READMEs as a map when onboarding or planning work.
+The Vite + React dashboard consumes `/api/*` routes via React Query and listens
+for engine events via server-sent events.  Dedicated panels render:
+
+- Top status bar (mode, broker, equity, heartbeat)
+- Pipeline monitor with live badges per stage
+- Event log (filterable) that surfaces the latest 200 events
+- Open positions & pending orders tables
+- RL signal panel (direction, confidence, feature snapshot)
+- News feed with per-symbol impact badges
+- Backtest runner showing equity curves
+- Settings drawer for risk toggles (`TRADE_ALLOCATION_PCT`, `RISK_PCT_PER_TRADE`, etc.)
+
+## Running Locally
+
+### Backend
+
+```bash
+poetry install
+poetry run uvicorn forex_app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+The default CORS configuration allows http://localhost:5173 so the Vite dev
+server can interact with the API.
+
+## Key Features
+
+- **RL Signal Engine** – Loads a PPO model (`data/models/ppo_fx.zip`) if present
+  or falls back to a deterministic EMA/RSI heuristic.
+- **Risk Discipline** – Trades a configurable percentage of free equity, applies
+  ATR-based stops/take-profits, caps leverage, and halts trading when drawdown
+  thresholds are exceeded.
+- **Paper & Live Modes** – Paper broker ships with deterministic pricing; swap
+  to the OANDA adapter via `BROKER=oanda` once credentials are configured.
+- **Transparency First** – Every pipeline stage produces structured JSON events,
+  including explicit reasons for idle states.  Prometheus metrics expose engine
+  heartbeats, trade counts, and equity levels.
+- **Backtesting** – `/api/backtest/run` replays candles through the same feature
+  and risk pipeline to generate an equity curve and trade ledger.
+- **News Awareness** – Polls GDELT every five minutes, tags relevant FX symbols,
+  and surfaces sentiment/impact on the dashboard.
+
+## Testing
+
+Run the full suite (risk sizing, RL gating, and API smoke tests) via:
+
+```bash
+poetry run pytest
+```
+
+## Environment Variables
+
+All configuration lives in `.env`.  Key entries:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `BROKER` | `paper` | `paper` or `oanda`. |
+| `TRADE_ALLOCATION_PCT` | `0.02` | Fraction of equity allocated per trade. |
+| `RISK_PCT_PER_TRADE` | `0.5` | Fraction of the allocation risked at stop-loss. |
+| `MAX_LEVERAGE` | `20` | Leverage guardrail. |
+| `MAX_DRAWDOWN_STOP` | `0.2` | Hard stop once drawdown exceeds 20%. |
+| `MIN_SIGNAL_CONF` | `0.6` | Minimum RL confidence to accept a trade. |
+| `CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed origins for dashboard traffic. |
+| `NEWS_PROVIDER` | `gdelt` | News adapter (`gdelt` or `alphavantage`). |
+
+## Screenshots
+
+Update the `docs/` folder with dashboard screenshots once the frontend is
+connected to a running engine.
