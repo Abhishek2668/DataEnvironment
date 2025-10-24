@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Modular paper-trading forex application"
 authors = ["AI Engineer <ai@example.com>"]
 readme = "README.md"
-packages = [{ include = "forex" }, { include = "forex_app" }]
+packages = [{ include = "forex" }, { include = "forex_app" }, { include = "forex_bot" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
