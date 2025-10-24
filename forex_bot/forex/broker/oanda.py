@@ -39,7 +39,7 @@ class OandaBroker:
     name = "oanda"
 
     def __init__(self) -> None:
-        self.settings = get_settings()
+        self.settings = get_settings(reload=True)
         if not self.settings.oanda_account_id:
             msg = "OANDA_ACCOUNT_ID is required"
             raise OandaError(msg)

@@ -12,7 +12,12 @@ DEFAULT_TIMEZONE = "America/Winnipeg"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     broker: Literal["oanda", "paper"] = Field(default="oanda", alias="BROKER")
     oanda_env: Literal["practice"] = Field(default="practice", alias="OANDA_ENV")
@@ -27,9 +32,6 @@ class Settings(BaseSettings):
     api_host: str = Field(default="127.0.0.1", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
 
-    class Config:
-        env_prefix = ""
-
     def validate_practice_only(self) -> None:
         if self.oanda_env != "practice":
             msg = "Only OANDA practice environment is supported."
@@ -41,10 +43,20 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings() -> Settings:
+def _load_settings() -> Settings:
     settings = Settings()
     settings.validate_practice_only()
     return settings
 
 
-__all__ = ["Settings", "get_settings", "DEFAULT_TIMEZONE"]
+def get_settings(*, reload: bool = False) -> Settings:
+    if reload:
+        _load_settings.cache_clear()
+    return _load_settings()
+
+
+def reset_settings_cache() -> None:
+    _load_settings.cache_clear()
+
+
+__all__ = ["Settings", "get_settings", "reset_settings_cache", "DEFAULT_TIMEZONE"]

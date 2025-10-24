@@ -29,7 +29,9 @@ async def test_get_account(settings, monkeypatch):
     with patch("forex.broker.oanda._client") as mock_client:
         async_mock = AsyncMock()
         async_mock.__aenter__.return_value = async_mock
-        async_mock.request.return_value = httpx.Response(200, json=response)
+        async_mock.request.return_value = httpx.Response(
+            200, json=response, request=httpx.Request("GET", "http://test")
+        )
         mock_client.return_value = async_mock
         data = await broker.get_account()
     assert data["balance"] == "100000"

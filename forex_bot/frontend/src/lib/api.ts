@@ -1,4 +1,5 @@
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+export const API_BASE =
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || "http://localhost:8000";
 const TOKEN = import.meta.env.VITE_DASH_TOKEN || "dev-token";
 
 export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {

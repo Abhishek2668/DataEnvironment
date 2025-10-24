@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 TimeInForce = Literal["FOK", "GTC", "GFD", "IOC"]
 OrderSide = Literal["buy", "sell"]
@@ -15,6 +15,7 @@ class Price:
     bid: float
     ask: float
     time: datetime
+    metadata: dict[str, Any] | None = None
 
     @property
     def mid(self) -> float:

@@ -4,18 +4,19 @@ type Unsubscribe = () => void;
 
 type MessageHandler<T> = (data: T) => void;
 
-export function subscribeSSE<T = unknown>(path: string, onMessage: MessageHandler<T>): Unsubscribe {
-  const url = `${API_BASE}${path}`;
-  let eventSource = new EventSource(url);
+interface SSEOptions {
+  onOpen?: () => void;
+  onError?: (event?: Event) => void;
+}
 
-  const reconnect = () => {
-    if (eventSource.readyState === EventSource.CLOSED) {
-      eventSource.close();
-    }
-    eventSource = new EventSource(url);
-    eventSource.onmessage = handleMessage;
-    eventSource.onerror = handleError;
-  };
+export function subscribeSSE<T = unknown>(
+  path: string,
+  onMessage: MessageHandler<T>,
+  options: SSEOptions = {}
+): Unsubscribe {
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  let closed = false;
+  let eventSource = new EventSource(url);
 
   const handleMessage = (event: MessageEvent) => {
     try {
@@ -26,13 +27,37 @@ export function subscribeSSE<T = unknown>(path: string, onMessage: MessageHandle
     }
   };
 
-  const handleError = () => {
+  const handleOpen = () => {
+    options.onOpen?.();
+  };
+
+  const reconnect = () => {
+    if (closed) {
+      return;
+    }
+    if (eventSource.readyState !== EventSource.CLOSED) {
+      eventSource.close();
+    }
+    eventSource = new EventSource(url);
+    eventSource.onmessage = handleMessage;
+    eventSource.onerror = handleError;
+    eventSource.onopen = handleOpen;
+  };
+
+  const handleError = (event: Event) => {
+    options.onError?.(event);
     eventSource.close();
     setTimeout(reconnect, 1500);
   };
 
   eventSource.onmessage = handleMessage;
   eventSource.onerror = handleError;
+  eventSource.onopen = handleOpen;
 
-  return () => eventSource.close();
+  return () => {
+    closed = true;
+    eventSource.close();
+  };
 }
+
+export type { SSEOptions };
