@@ -51,6 +51,23 @@ class LiveRunRequest(BaseModel):
         return data
 
 
+class SessionStartRequest(BaseModel):
+    strategy: str
+    instrument: str
+    granularity: str
+    risk: float = Field(gt=0)
+    max_positions: int = Field(default=1, ge=1)
+    stop_distance_pips: float = Field(default=20.0, gt=0)
+    spread_pips: float | None = Field(default=None, ge=0)
+    take_profit_pips: float | None = Field(default=None, ge=0)
+    loop_interval: float = Field(default=15.0, ge=1.0)
+    daily_target_pct: float | None = Field(default=None, ge=0, alias="target_return_pct")
+    daily_loss_limit_pct: float | None = Field(default=None, ge=0, alias="loss_limit_pct")
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+
 class BacktestRequest(BaseModel):
     strategy: str
     instrument: str
@@ -423,6 +440,54 @@ def create_app(
                 bus.unsubscribe("events", queue)
 
         return StreamingResponse(generator(), media_type="text/event-stream")
+
+    @app.get("/api/session/state")
+    async def session_state(runner: LiveRunner = Depends(get_live_runner)) -> dict[str, Any]:
+        state = await runner.get_state()
+        if not state.get("timestamp"):
+            state["timestamp"] = utc_now().isoformat()
+        return state
+
+    @app.post("/api/session/start")
+    async def session_start(
+        payload: SessionStartRequest,
+        runner: LiveRunner = Depends(get_live_runner),
+        settings: Settings = Depends(get_settings_dependency),
+    ) -> dict[str, Any]:
+        ensure_paper_only(settings)
+        spread = payload.spread_pips if payload.spread_pips is not None else settings.spread_pips_default
+        try:
+            run_id = await runner.start(
+                LiveRunConfig(
+                    strategy=payload.strategy,
+                    instrument=payload.instrument,
+                    granularity=payload.granularity,
+                    risk_pct=payload.risk,
+                    stop_distance_pips=payload.stop_distance_pips,
+                    max_positions=payload.max_positions,
+                    spread_pips=spread,
+                    params=payload.params,
+                    take_profit_pips=payload.take_profit_pips,
+                    loop_interval=payload.loop_interval,
+                    daily_target_pct=payload.daily_target_pct,
+                    daily_loss_limit_pct=payload.daily_loss_limit_pct,
+                )
+            )
+        except UnknownStrategyError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except LiveRunnerError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return {"status": "started", "run_id": run_id}
+
+    @app.post("/api/session/stop")
+    async def session_stop(
+        runner: LiveRunner = Depends(get_live_runner),
+        settings: Settings = Depends(get_settings_dependency),
+    ) -> dict[str, Any]:
+        ensure_paper_only(settings)
+        await runner.stop()
+        state = await runner.get_state()
+        return {"status": "stopped", "run_id": state.get("run_id")}
 
     return app
 

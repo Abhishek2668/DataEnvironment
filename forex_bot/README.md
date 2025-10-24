@@ -1,78 +1,100 @@
-# Forex Paper Trading Bot
+# Forex Paper Trading Application
 
-A modular, production-ready forex paper trading toolkit supporting OANDA v20 practice accounts with extensible broker abstractions, deterministic strategies, and CLI utilities for live paper trading and backtesting.
+This directory contains everything required to run the forex paper-trading
+experience: infrastructure-as-code, Python backend, React frontend, automation
+scripts, and tests.  The goal of this README is to orient developers so they can
+quickly understand how each piece of the stack fits together.
 
-## Features
+## High-Level Architecture
 
-- Broker abstraction with OANDA v20 practice implementation and local paper simulator
-- Strategy engine with SMA crossover and RSI mean reversion examples
-- Risk management helpers for pip calculations and sizing
-- SQLite candle store with SQLAlchemy models
-- Candle-based backtester producing metrics and CSV/JSON reports
-- Typer-powered CLI with commands for live runs, backtests, importing candles, and viewing metrics
-- Structured JSON logging to stdout and rotating log files
-- Configurable via `.env` using `pydantic-settings`
-- Docker and Docker Compose for local execution
-
-## Prerequisites
-
-- Python 3.11+
-- [Poetry](https://python-poetry.org/)
-- OANDA practice account and API token (for broker operations)
-
-## Setup
-
-```bash
-cd forex_bot
-poetry install
-cp .env.example .env
-# Edit .env with your OANDA practice credentials
+```
+┌──────────────────┐     HTTP + SSE      ┌────────────────────────┐
+│ React Dashboard  │  ─────────────────▶ │ FastAPI Application    │
+│ (frontend/)      │ ◀────────────────── │ (forex/api.py)         │
+└──────────────────┘   REST + streaming  └─────────┬──────────────┘
+                                                   │
+                                                   ▼
+                                        Domain Packages (forex/)
+                                                   │
+                                                   ▼
+                                         Brokers, Strategies,
+                                         Backtesting, Storage
 ```
 
-## Running the CLI
+- **frontend/** implements a Vite + React dashboard that authenticates to the
+  API, streams live events, submits new runs, and renders metrics.
+- **forex/** contains the Python domain model: broker adapters, strategy engine,
+  backtesting loop, execution services, realtime orchestration, and shared
+  utilities.
+- **Dockerfile**, **docker-compose.yml**, and **Makefile** coordinate local and
+  containerized workflows.
+- **scripts/** provides helper shell commands (`dev_backend.sh`,
+  `dev_frontend.sh`) for quick-start development.
+- **tests/** contains pytest coverage for the critical code paths.
 
-Activate the Poetry shell or use `poetry run`:
+Each directory includes a README that explains its contents in detail.  Follow
+those breadcrumbs whenever you dive deeper.
 
-```bash
-poetry run forex backtest --strategy rsi --instrument EUR_USD --granularity M5 --risk 0.5 --spread-pips 0.8 --data-csv sample.csv
-poetry run forex import-candles --instrument EUR_USD --granularity H1 --days 30
-poetry run forex run-live --strategy sma --instrument USD_JPY --granularity M1 --risk 0.25 --max-trades 2
-poetry run forex show-metrics --run-id last
-```
+## Backend Runtime Overview
 
-## Web Dashboard & API
+1. **Configuration** is loaded from environment variables via
+   [`forex/config.py`](forex/config.py).  Secrets and ports are defined in `.env`.
+2. **FastAPI** is initialised in [`forex/api.py`](forex/api.py).  The app wires
+   together broker factories, data stores, event bus, strategy registry, and
+   live runner.
+3. **Broker adapters** under [`forex/broker`](forex/broker) implement either the
+   OANDA practice API or a deterministic paper simulator.
+4. **Strategies** in [`forex/strategy`](forex/strategy) produce trade signals.
+5. **Execution** modules in [`forex/execution`](forex/execution) translate
+   signals into orders and risk management rules.
+6. **Realtime orchestration** in [`forex/realtime`](forex/realtime) manages
+   streaming prices, event bus fan-out, and the live run lifecycle.
+7. **Backtesting** code in [`forex/backtest`](forex/backtest) replays historical
+   candles, calculates metrics, and writes summary reports.
+8. **Data stores** in [`forex/data`](forex/data) persist candles and run
+   metadata via SQLAlchemy models.
 
-Expose the FastAPI layer with:
+## Frontend Runtime Overview
 
-```bash
-poetry run forex api --host 0.0.0.0 --port 8000 --reload
-```
+1. [`frontend/src/lib/api.ts`](frontend/src/lib/api.ts) wraps fetch calls and
+   handles authentication headers.
+2. [`frontend/src/hooks/useApi.ts`](frontend/src/hooks/useApi.ts) and
+   [`frontend/src/hooks/useEventStream.ts`](frontend/src/hooks/useEventStream.ts)
+   encapsulate REST + SSE interactions.
+3. [`frontend/src/App.tsx`](frontend/src/App.tsx) is the primary dashboard
+   container.  It fetches configuration, account snapshots, open positions, run
+   history, and renders charts via Recharts.
+4. [`frontend/src/components`](frontend/src/components) contains small UI
+   primitives (button, card, input, select) used throughout the dashboard.
 
-The dashboard expects a bearer token defined in `.env` (`DASH_TOKEN`). With the API online start the React frontend:
+Consult `frontend/README.md` for a detailed breakdown of the React project and
+its file-by-file responsibilities.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Operational Files
 
-Open http://localhost:5173 to view live account telemetry, control paper runs, tail structured logs via SSE, and launch backtests. All mutating actions remain paper-only and reuse the existing broker, executor, and backtest services.
+| File | Purpose |
+| --- | --- |
+| `Dockerfile` | Builds a production-ready image that serves the API. |
+| `docker-compose.yml` | Spins up the API, database, and frontend services for local experimentation. |
+| `Makefile` | Provides shortcuts (`dev-api`, `dev-ui`, `lint`, `test`). |
+| `pyproject.toml` | Poetry project definition with lint/test tooling configuration. |
+| `scripts/dev_backend.sh` | Runs the FastAPI server with auto-reload. |
+| `scripts/dev_frontend.sh` | Starts the Vite development server. |
 
-## Docker
+## Testing Strategy
 
-Build and run services using Docker Compose:
+- `pytest` is the canonical test runner.  See [`tests/README.md`](tests/README.md)
+  for the coverage map.
+- Backtesting, broker integrations, math utilities, and strategies each have
+  dedicated tests under `tests/`.
+- End-to-end API sanity checks live in `tests/test_api.py` and exercise the
+  FastAPI routes against a simulated broker.
 
-```bash
-docker compose build
-docker compose up api frontend
-```
+## Next Steps
 
-## Testing
+- Visit [`forex/README.md`](forex/README.md) for backend internals.
+- Visit [`frontend/README.md`](frontend/README.md) for React project details.
+- Review [`tests/README.md`](tests/README.md) to understand coverage.
 
-```bash
-poetry run pytest
-```
-
-## Risk Disclaimer
-
-This project is for educational and paper-trading purposes only. Do **not** use with live funds. Always verify strategies in simulation before trading real money.
+This directory is the central hub that links all developer documentation in the
+project.  Use the table of READMEs as a map when onboarding or planning work.

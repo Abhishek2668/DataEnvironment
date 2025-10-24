@@ -3,6 +3,7 @@ from typing import Any
 
 import pendulum
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 
 from forex.api import create_app
@@ -52,7 +53,7 @@ class DummyRunner:
         self.stopped = True
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def api_client():
     settings = Settings(broker="paper", dash_token="test-token", api_host="127.0.0.1", api_port=8000)
     store = CandleStore("sqlite:///:memory:")

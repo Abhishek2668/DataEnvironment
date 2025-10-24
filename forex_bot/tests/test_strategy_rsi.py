@@ -15,7 +15,12 @@ def test_rsi_strategy_signal():
     strat.on_startup(context)
     base = 1.2
     for i in range(40):
-        price = make_price(base + (0.0005 if i % 2 == 0 else -0.0005))
+        if i < 20:
+            level = base - 0.0008 * i
+        else:
+            level = base - 0.016 + 0.0006 * (i - 20)
+        swing = 0.00025 if i % 2 == 0 else -0.00025
+        price = make_price(level + swing)
         strat.on_price_tick(price)
         strat.on_bar_close(price)
     signal = strat.get_signal()
