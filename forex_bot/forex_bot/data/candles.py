@@ -201,7 +201,7 @@ class CandleStore:
         if not token:
             logger.warning("OANDA_API_TOKEN not configured; skipping remote candle fetch")
             return []
-        params = {"granularity": timeframe, "count": limit, "price": "M", "includeFirst": False}
+        params = {"granularity": timeframe, "count": limit, "price": "M"}
         url = f"{self._oanda_base_url}/v3/instruments/{instrument}/candles"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0)) as client:
