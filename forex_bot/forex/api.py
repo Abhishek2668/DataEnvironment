@@ -345,7 +345,7 @@ def create_app(
             slippage=payload.slippage,
         )
         backtester = Backtester(strategy, config)
-        run_id = utc_now().format("YYYYMMDDHHmmss")
+        run_id = utc_now().strftime("%Y%m%d%H%M%S")
         run_store.start_run(
             run_id,
             run_type="backtest",
