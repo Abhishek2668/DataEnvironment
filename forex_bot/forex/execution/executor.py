@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable, Optional
 
 from forex.broker.base import Broker
 from forex.execution.risk import RiskParameters, position_size
 from forex.logging_config import get_logger
 from forex.strategy.base import Signal, Strategy
 from forex.utils.types import OrderRequest, Price
+from forex.utils.time import utc_now
 
 if TYPE_CHECKING:
     from forex.realtime.bus import EventBus
@@ -31,12 +32,14 @@ class Executor:
         strategy: Strategy,
         config: ExecutionConfig,
         event_bus: "EventBus" | None = None,
+        on_trade: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
     ) -> None:
         self.broker = broker
         self.strategy = strategy
         self.config = config
         self.open_positions: list[dict] = []
         self.event_bus = event_bus
+        self.on_trade = on_trade
 
     async def handle_signal(self, signal: Signal) -> None:
         if len(self.open_positions) >= self.config.max_positions:
@@ -73,18 +76,23 @@ class Executor:
             "order_submitted",
             extra={"instrument": order.instrument, "units": order.units, "side": order.side, "reason": signal.reason},
         )
+        trade_payload = {
+            "instrument": order.instrument,
+            "side": order.side,
+            "units": order.units,
+            "reason": signal.reason,
+            "response": response,
+            "timestamp": utc_now().isoformat(),
+        }
+        session_snapshot: Optional[dict[str, Any]] = None
+        if self.on_trade:
+            session_snapshot = await self.on_trade(trade_payload)
+        event_payload: dict[str, Any] = {"type": "new_trade", "trade": trade_payload}
+        if session_snapshot:
+            for key, value in session_snapshot.items():
+                event_payload.setdefault(key, value)
         if self.event_bus:
-            await self.event_bus.publish(
-                "events",
-                {
-                    "event": "order_submitted",
-                    "instrument": order.instrument,
-                    "side": order.side,
-                    "units": order.units,
-                    "reason": signal.reason,
-                    "response": response,
-                },
-            )
+            await self.event_bus.publish("events", event_payload)
 
     async def run_bar(self, price: Price) -> None:
         self.strategy.on_bar_close(price)

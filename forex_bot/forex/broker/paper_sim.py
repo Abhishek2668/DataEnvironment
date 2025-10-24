@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
-from datetime import datetime
 from typing import AsyncIterator, Deque, Iterable, Sequence
 
 from forex.utils.time import utc_now
@@ -13,7 +13,7 @@ class PaperSimBroker:
 
     def __init__(self, spread_pips: float = 0.8) -> None:
         self.spread_pips = spread_pips
-        self.account = {"balance": 100000.0, "currency": "USD"}
+        self.account = {"balance": 100000.0, "equity": 100000.0, "currency": "USD"}
         self.positions: list[dict] = []
         self.orders: Deque[dict] = deque()
 
@@ -36,6 +36,7 @@ class PaperSimBroker:
         while True:
             for price in await self.get_prices(instruments):
                 yield price
+            await asyncio.sleep(1)
 
     async def place_order(self, order: OrderRequest) -> dict:
         price = 1.0
