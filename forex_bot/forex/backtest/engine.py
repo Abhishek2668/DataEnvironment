@@ -27,7 +27,16 @@ class CandleBar:
     def to_price(self, instrument: str, spread: float) -> Price:
         bid = self.close - spread / 2
         ask = self.close + spread / 2
-        return Price(instrument=instrument, bid=bid, ask=ask, time=self.time)
+        metadata = {
+            "bar": {
+                "open": self.open,
+                "high": self.high,
+                "low": self.low,
+                "close": self.close,
+                "volume": self.volume,
+            }
+        }
+        return Price(instrument=instrument, bid=bid, ask=ask, time=self.time, metadata=metadata)
 
 
 @dataclass

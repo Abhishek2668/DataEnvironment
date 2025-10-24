@@ -44,11 +44,12 @@ class Executor:
             return
         account = await self.broker.get_account()
         equity = float(account.get("balance", 0))
+        stop_distance_pips = signal.stop_distance_pips or self.config.stop_distance_pips
         units = position_size(
             RiskParameters(
                 equity=equity,
                 risk_pct=self.config.risk_pct,
-                stop_distance_pips=self.config.stop_distance_pips,
+                stop_distance_pips=stop_distance_pips,
                 instrument=self.config.instrument,
             )
         )
@@ -60,6 +61,12 @@ class Executor:
             units=units,
             side=signal.side,  # type: ignore[arg-type]
         )
+        stop_price = signal.metadata.get("stop_price") if signal.metadata else None
+        take_profit_price = signal.metadata.get("take_profit_price") if signal.metadata else None
+        if stop_price is not None:
+            order.stop_loss = float(stop_price)
+        if take_profit_price is not None:
+            order.take_profit = float(take_profit_price)
         response = await self.broker.place_order(order)
         self.open_positions.append({"order": response, "signal": signal})
         logger.info(
