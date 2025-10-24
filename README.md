@@ -33,6 +33,41 @@ additional, directory-specific READMEs that drill into each subsystem.
 Each of these directories contains a README with deeper documentation so you
 can drill down level by level.
 
+## Run the Application Locally
+
+Follow these steps to spin up the FastAPI backend and the React dashboard on
+your machine:
+
+1. **Install prerequisites**
+   - Python 3.11+
+   - [Poetry](https://python-poetry.org/) for backend dependencies
+   - Node.js 18+ and npm for the frontend
+2. **Install backend dependencies**
+   ```bash
+   cd forex_bot
+   poetry install
+   ```
+3. **Create environment files**
+   - Copy `forex_bot/.env.example` (or the appropriate sample files) to
+     `.env` and fill in broker credentials and ports for the backend.
+   - Optionally configure `forex_bot/frontend/.env` for frontend-specific
+     overrides.
+4. **Start the backend**
+   ```bash
+   ./scripts/dev_backend.sh
+   ```
+   The API runs at `http://localhost:8000` with auto-reload enabled.
+5. **Start the frontend** (in a new terminal)
+   ```bash
+   ./scripts/dev_frontend.sh
+   ```
+   The Vite dev server exposes the dashboard at `http://localhost:5173` (or the
+   next available port).
+
+You can also launch both services via Docker Compose with
+`docker compose up --build` inside `forex_bot/` if you prefer a containerized
+workflow.
+
 ## Developer Quick Reference
 
 - **Python tooling**: Poetry manages dependencies (`pyproject.toml`).  Ruff,
