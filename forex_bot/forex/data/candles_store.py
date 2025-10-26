@@ -13,7 +13,7 @@ from forex.data.models import Base, Candle
 
 class CandleStore:
     def __init__(self, database_path: Path | str = "sqlite:///forex.db") -> None:
-        self.engine = create_engine(str(database_path), future=True)
+        self.engine = create_engine(f"sqlite:///{database_path}", future=True)
         Base.metadata.create_all(self.engine)
 
     @contextmanager
