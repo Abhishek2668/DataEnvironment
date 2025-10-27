@@ -28,7 +28,7 @@ from .models import (
 from .news import NewsService
 from .risk import RiskManager
 from .rl_agent import RLSignalService
-from .settings import Settings, SettingsUpdate, get_settings, update_settings
+from forex_bot.utils.settings import Settings, get_settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -36,9 +36,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging()
     app = FastAPI(title="Forex RL Trading API")
     event_bus = EventBus()
-    candle_store = CandleStore(settings.DB_PATH)
+    candle_store = CandleStore(settings.db_path)
     news_service = NewsService(settings)
-    broker = PaperBroker() if settings.BROKER == "paper" else OandaBroker()
+    broker = PaperBroker() if settings.broker == "paper" else OandaBroker()
     engine = TradingEngine(
         settings=settings,
         broker=broker,
@@ -49,7 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
