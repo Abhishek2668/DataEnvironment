@@ -5,8 +5,9 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
+
 
 from forex_bot.broker import PaperBroker
 from forex_bot.broker.oanda import OandaBroker
@@ -46,6 +47,9 @@ class TradingEngine:
         self._last_signal: Signal | None = None
         self._open_trades: int = 0
         self._unrealized_pnl: float = 0.0
+        self._news_windows: list[tuple[datetime, datetime]] = []
+        self._open_position_risk: Dict[str, float] = {}
+        self._position_metadata: Dict[str, Dict[str, Any]] = {}
         self._state_snapshot: Dict[str, Any] = {
             "running": False,
             "status": "stopped",
@@ -89,6 +93,9 @@ class TradingEngine:
         self._last_signal = None
         self._open_trades = 0
         self._unrealized_pnl = 0.0
+        self._news_windows.clear()
+        self._open_position_risk.clear()
+        self._position_metadata.clear()
         await self.bus.publish(
             "engine.state",
             {
@@ -171,9 +178,12 @@ class TradingEngine:
         if self._forced_signal:
             raw_signal: Signal | Dict[str, Any] | None = self._forced_signal
         else:
+            strategy_context = await self._build_strategy_context(instrument, latest.timestamp)
             try:
                 raw_signal = self.strategy.generate(
-                    candles, threshold=self.settings.signal_confidence_threshold
+                    candles,
+                    threshold=self.settings.signal_confidence_threshold,
+                    context=strategy_context,
                 )
             except TypeError:
                 raw_signal = self.strategy.generate(candles)
@@ -183,31 +193,67 @@ class TradingEngine:
 
         executed_order: Dict[str, Any] | None = None
         if signal and signal.confidence >= self.settings.signal_confidence_threshold:
-            logger.info(
-                "[ENGINE] Executing %s trade on %s",
-                signal.direction,
-                instrument,
-            )
-            executed_order = await self.broker.execute_trade(
-                instrument,
-                signal.direction,
-                run_id=self.current_run.id if self.current_run else "",
-                price=latest.close,
-                confidence=signal.confidence,
-            )
-            await self.bus.publish(
-                "trade.executed",
-                {
-                    "run_id": self.current_run.id if self.current_run else None,
-                    "instrument": instrument,
-                    "timeframe": timeframe,
-                    "direction": signal.direction,
-                    "confidence": signal.confidence,
-                    "price": latest.close,
-                    "order": executed_order,
-                },
-            )
-        else:
+            can_trade, position_size, risk_pct = await self.manage_risk(signal, latest)
+            if not can_trade:
+                logger.info("[ENGINE] Risk controls rejected trade signal")
+                signal = None
+                self._last_signal = None
+            else:
+                logger.info(
+                    "[ENGINE] Executing %s trade on %s (units=%s)",
+                    signal.direction,
+                    instrument,
+                    position_size,
+                )
+                original_units = self.settings.trade_units
+                self.settings.trade_units = max(position_size, 1)
+                try:
+                    executed_order = await self.broker.execute_trade(
+                        instrument,
+                        signal.direction,
+                        run_id=self.current_run.id if self.current_run else "",
+                        price=latest.close,
+                        confidence=signal.confidence,
+                    )
+                finally:
+                    self.settings.trade_units = original_units
+                if executed_order:
+                    position_id = executed_order.get("position_id")
+                    if position_id:
+                        self._open_position_risk[position_id] = risk_pct
+                        trade_log = self._compose_trade_log(
+                            signal,
+                            result="open",
+                            additional={
+                                "order_id": executed_order.get("order_id"),
+                                "position_id": position_id,
+                                "instrument": instrument,
+                                "timeframe": timeframe,
+                                "position_size": position_size,
+                                "entry_price": latest.close,
+                            },
+                        )
+                        self._position_metadata[position_id] = trade_log
+                        logger.info("[ENGINE] Trade metrics: %s", trade_log)
+                    await self.bus.publish(
+                        "trade.executed",
+                        {
+                            "run_id": self.current_run.id if self.current_run else None,
+                            "instrument": instrument,
+                            "timeframe": timeframe,
+                            "direction": signal.direction,
+                            "confidence": signal.confidence,
+                            "price": latest.close,
+                            "order": executed_order,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "regime": signal.regime,
+                            "confidence_breakdown": signal.confidence_breakdown,
+                            "rr_ratio": signal.rr_ratio,
+                            "position_size": position_size,
+                        },
+                    )
+        if not executed_order:
             logger.info("[ENGINE] No valid trade signal this loop.")
 
         if self.current_run:
@@ -218,6 +264,22 @@ class TradingEngine:
             )
             if closed:
                 logger.info("Closed %s positions", len(closed))
+                for payload in closed:
+                    position_id = payload.get("position_id")
+                    if position_id and position_id in self._open_position_risk:
+                        self._open_position_risk.pop(position_id, None)
+                    if position_id and position_id in self._position_metadata:
+                        trade_log = dict(self._position_metadata.pop(position_id))
+                        pnl = payload.get("pnl", 0.0)
+                        trade_log.update(
+                            {
+                                "result": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
+                                "pnl": pnl,
+                                "exit_price": payload.get("exit_price"),
+                                "closed_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+                            }
+                        )
+                        logger.info("[ENGINE] Trade outcome: %s", trade_log)
 
         activity = "trade" if executed_order else "idle"
         await self._refresh_metrics(latest, activity)
@@ -241,7 +303,23 @@ class TradingEngine:
         self._stop_event.set()
 
     def force_signal(self, direction: str, confidence: float) -> None:
-        self._forced_signal = Signal(direction=direction, confidence=confidence, reason="manual")
+        entry = self._last_candle.close if self._last_candle else None
+        if entry is None:
+            self._forced_signal = Signal(direction=direction, confidence=confidence, reason="manual")
+            return
+        buffer = 0.001
+        stop_loss = entry - buffer if direction == "long" else entry + buffer
+        take_profit = entry + buffer * 3 if direction == "long" else entry - buffer * 3
+        self._forced_signal = Signal(
+            direction=direction,
+            confidence=confidence,
+            reason="manual",
+            entry_price=entry,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            regime="manual",
+            timestamp=datetime.utcnow().replace(tzinfo=timezone.utc),
+        )
 
     async def _warm_history(self) -> None:
         if not self.context:
@@ -334,7 +412,121 @@ class TradingEngine:
             confidence_value = float(confidence)
         except (TypeError, ValueError):
             confidence_value = 0.0
-        return Signal(direction=direction, confidence=confidence_value, reason=reason)
+        entry_price = value.get("entry_price") if isinstance(value, dict) else None
+        stop_loss = value.get("stop_loss") if isinstance(value, dict) else None
+        take_profit = value.get("take_profit") if isinstance(value, dict) else None
+        regime = value.get("regime") if isinstance(value, dict) else None
+        confidence_breakdown = value.get("confidence_breakdown") if isinstance(value, dict) else None
+        rr_ratio = value.get("rr_ratio") if isinstance(value, dict) else None
+        timestamp_value = value.get("timestamp") if isinstance(value, dict) else None
+        indicators = value.get("indicators") if isinstance(value, dict) else None
+        position_size = value.get("position_size") if isinstance(value, dict) else None
+        return Signal(
+            direction=direction,
+            confidence=confidence_value,
+            reason=reason,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            regime=regime,
+            confidence_breakdown=confidence_breakdown,
+            rr_ratio=rr_ratio,
+            timestamp=timestamp_value,
+            indicators=indicators,
+            position_size=position_size,
+        )
+
+    async def _build_strategy_context(
+        self, instrument: str, timestamp: datetime
+    ) -> Dict[str, Any]:
+        news_blocked = self._is_news_blocked(timestamp)
+        h1_task = asyncio.create_task(self.store.get_latest(instrument, "H1", 200))
+        h4_task = asyncio.create_task(self.store.get_latest(instrument, "H4", 200))
+        h1_candles, h4_candles = await asyncio.gather(h1_task, h4_task)
+        return {
+            "news_blocked": news_blocked,
+            "higher_timeframes": {
+                "H1": h1_candles,
+                "H4": h4_candles,
+            },
+        }
+
+    def _is_news_blocked(self, timestamp: datetime) -> bool:
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        windows: list[tuple[datetime, datetime]] = []
+        blocked = False
+        for start, end in self._news_windows:
+            if end < timestamp:
+                continue
+            windows.append((start, end))
+            if start <= timestamp <= end:
+                blocked = True
+        self._news_windows = windows
+        return blocked
+
+    def register_news_event(self, event_time: datetime, window: timedelta | None = None) -> None:
+        window = window or timedelta(minutes=30)
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        start = event_time - window
+        end = event_time + window
+        self._news_windows.append((start, end))
+
+    async def manage_risk(self, signal: Signal, latest: Candle) -> tuple[bool, int, float]:
+        if signal.stop_loss is None or signal.entry_price is None:
+            logger.warning("[ENGINE] Signal missing stop-loss or entry; cannot manage risk")
+            return False, 0, 0.0
+        summary = await self.broker.account_summary()
+        equity = float(summary.get("balance", 0.0))
+        if equity <= 0:
+            logger.warning("[ENGINE] Unable to determine account equity; skipping trade")
+            return False, 0, 0.0
+        pip_size = self._pip_size(latest.instrument)
+        stop_distance = abs(signal.entry_price - signal.stop_loss)
+        stop_distance_pips = stop_distance / pip_size if pip_size else 0.0
+        if stop_distance_pips <= 0:
+            logger.warning("[ENGINE] Invalid stop distance; skipping trade")
+            return False, 0, 0.0
+        risk_pct = 0.01
+        total_exposure = sum(self._open_position_risk.values())
+        if total_exposure + risk_pct > 0.03:
+            logger.info("[ENGINE] Exposure cap reached (%.2f); skipping trade", total_exposure)
+            return False, 0, risk_pct
+        position_size = int((equity * risk_pct) / stop_distance_pips)
+        if position_size <= 0:
+            logger.info("[ENGINE] Computed position size is zero; skipping trade")
+            return False, 0, risk_pct
+        signal.position_size = position_size
+        return True, position_size, risk_pct
+
+    def _pip_size(self, instrument: str) -> float:
+        if instrument.upper().endswith("JPY"):
+            return 0.01
+        return 0.0001
+
+    def _compose_trade_log(
+        self,
+        signal: Signal,
+        *,
+        result: str,
+        additional: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            "timestamp": (signal.timestamp or datetime.utcnow().replace(tzinfo=timezone.utc)).isoformat(),
+            "regime": signal.regime,
+            "confidence": signal.confidence,
+            "confidence_breakdown": signal.confidence_breakdown,
+            "rr_ratio": signal.rr_ratio,
+            "direction": signal.direction,
+            "reason": signal.reason,
+            "result": result,
+        }
+        if signal.indicators:
+            payload["indicators"] = signal.indicators
+        if additional:
+            payload.update(additional)
+        return payload
 
 
 __all__ = ["TradingEngine"]
